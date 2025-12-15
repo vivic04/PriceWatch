@@ -1,0 +1,1 @@
+The idea of this project is to build a script that auto checks for price of items on chosen websites and informs the user for any specific changes. Can be scaled to user choosing specific sites and products they want emails incase they drop below a certain threshold. 
