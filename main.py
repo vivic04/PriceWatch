@@ -114,8 +114,9 @@ def check_prices():
             price_history = json.load(f)
     else:
         price_history = {}
-
-    for url in load_tracking_list:
+    tracking_data = load_tracking_list()
+    load_list = [item['url'] for item in tracking_data]
+    for url in load_list:
         price = get_price(url)
         
         if price:
