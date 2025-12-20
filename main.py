@@ -30,7 +30,7 @@ def parse_ebay(soup):
     # We try one, if it fails, try the other
     price_element = soup.find('div', class_='x-price-primary')
     if not price_element:
-        price_element = soup.find('span', id='v1p-merch-price')
+        price_element = soup.find('span', id='ux-textspans')
         
     if price_element:
         # eBay often has "US $20.00", we need to split the text to find the number
