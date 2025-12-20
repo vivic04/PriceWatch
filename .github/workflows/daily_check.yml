@@ -37,3 +37,10 @@ jobs:
         with:
           commit_message: "🤖 Update price history [skip ci]"
           file_pattern: price_history.json
+
+      - name: Upload Debug Screenshot
+        if: always() # Run even if the script fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: "*.png"

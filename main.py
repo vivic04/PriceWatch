@@ -16,44 +16,66 @@ def fetch_with_browser(url):
     
     try:
         with sync_playwright() as p:
-            # Launch a headless Chrome browser
-            browser = p.chromium.launch(headless=True)
+            # LAUNCH OPTIONS: Add arguments to hide the "Automation" flag
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled", # Hides the "I am a robot" flag
+                    "--no-sandbox" 
+                ]
+            )
             
-            # Create a new page with a realistic User Agent
+            # Create a Context with a Real User Agent and Screen Size
             context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 720}
             )
             page = context.new_page()
             
-            # Go to the URL and WAIT
-            print("   -> Loading Page...", flush=True)
-            page.goto(url, timeout=60000) # Give it 60 seconds
-            
-            # Wait for the price to appear (using the ID we found earlier)
-            # We try 2 different selectors just in case
-            try:
-                page.wait_for_selector('[data-testid="product-list-price-text"]', timeout=10000)
-            except:
-                print("   -> Main selector timeout, checking backup...", flush=True)
+            # Anti-Detection Script (Removes the 'navigator.webdriver' property)
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            # Get the fully rendered HTML
+            print("   -> Loading Page...", flush=True)
+            page.goto(url, timeout=90000) # Increased timeout to 90s
+            
+            # WAIT STRATEGY: Wait for *any* text to load first
+            # This ensures we aren't crashing just because the internet is slow
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000) # Wait for network to settle
+            except:
+                print("   -> Network busy, proceeding anyway...", flush=True)
+
+            # DEBUG: Take a screenshot so we can see what happened
+            # This will save to the server (you won't see it directly, but we can verify file creation)
+            page.screenshot(path="debug_aritzia.png")
+            print("   -> 📸 Debug screenshot saved (debug_aritzia.png)", flush=True)
+
+            # TRY TO CLOSE POPUPS (Common issue on Aritzia)
+            try:
+                # Look for common "Close" buttons or "Accept Cookies"
+                close_btn = page.query_selector('button[aria-label="Close"], .close-button, #onetrust-accept-btn-handler')
+                if close_btn:
+                    close_btn.click()
+                    print("   -> Closed a popup", flush=True)
+            except: pass
+
+            # GET CONTENT
             content = page.content()
             browser.close()
             
-            # Now we can parse it with Soup like normal
             soup = BeautifulSoup(content, "html.parser")
             
-            # ARITZIA PARSING LOGIC
+            # PARSING (Same as before)
             price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
             if not price_tag:
                 price_tag = soup.find(attrs={"data-testid": "product-price-text"})
                 
             if price_tag:
-                raw_text = price_tag.text.strip()
-                clean_text = raw_text.replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
-                if "-" in clean_text: clean_text = clean_text.split("-")[0].strip()
-                return float(clean_text)
+                clean = price_tag.text.strip().replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
+                if "-" in clean: clean = clean.split("-")[0].strip()
+                return float(clean)
                 
+            print("❌ Price not found in rendered HTML.", flush=True)
             return None
 
     except Exception as e:
