@@ -9,13 +9,18 @@ WEBHOOK_URL = os.environ.get("DISCORD_URL")
 DB_FILE = "price_history.json"
 
 # REAL WORLD HEADERS: Updated to look more like a standard browser
-HEADERS = {
+REAL_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate", # Removed 'br' to be safe, but kept gzip
     "Connection": "keep-alive",
 }
 
+# 2. THE T-SHIRT (For Sandbox / Simple sites)
+# Minimal headers so we don't confuse simple servers
+SIMPLE_HEADERS = {
+    "User-Agent": "Python-Scraper/1.0" 
+}
 # --- PARSERS (The Tools) ---
 
 def parse_toscrape(soup):
@@ -63,22 +68,28 @@ def parse_ebay(soup):
 
 def get_price(url):
     try:
-        # CLEAN THE URL: Remove everything after the '?'
         clean_url = url.split("?")[0]
-        
+        domain = urlparse(clean_url).netloc
         print(f"Fetching: {clean_url}")
-        
-        # INCREASED TIMEOUT: From 10 -> 30 seconds
-        response = requests.get(clean_url, headers=HEADERS, timeout=30)
+
+        # --- DYNAMIC HEADER SELECTION ---
+        # Decide which outfit to wear based on the domain
+        if "ebay" in domain:
+            current_headers = REAL_HEADERS
+        else:
+            # Default to simple for ToScrape and others
+            current_headers = SIMPLE_HEADERS
+            
+        # PASS THE CHOSEN HEADERS
+        response = requests.get(clean_url, headers=current_headers, timeout=30)
         
         if response.status_code != 200:
             print(f"⚠️ Blocked or Error ({response.status_code})")
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
-        domain = urlparse(clean_url).netloc 
 
-        # UPDATED SWITCHBOARD: Checks for 'ebay.' anywhere in the domain name
+        # Select the Parser
         if "toscrape.com" in domain:
             return parse_toscrape(soup)
         elif "ebay." in domain: 
