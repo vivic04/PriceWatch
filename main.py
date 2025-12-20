@@ -22,7 +22,7 @@ def parse_toscrape(soup):
     """Logic specifically for books.toscrape.com"""
     price_element = soup.find('p', class_='price_color')
     if price_element:
-        return float(price_element.text[1:])
+        return float(price_element.text[2:])
     return None
 
 def parse_ebay(soup):
