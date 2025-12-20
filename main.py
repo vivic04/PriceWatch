@@ -16,48 +16,83 @@ def fetch_with_browser(url):
     
     try:
         with sync_playwright() as p:
+            # Launch options to look real
             browser = p.chromium.launch(
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
             )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 720}
+                viewport={"width": 1920, "height": 1080} # Desktop size
             )
             page = context.new_page()
             
             print("   -> Loading Page...", flush=True)
-            page.goto(url, timeout=60000)
+            page.goto(url, timeout=90000)
             
-            # STRATEGY: Wait for money!
-            # We wait up to 15 seconds for ANY text containing '$' to appear
+            # --- POPUP KILLER ---
+            # Aritzia often shows a "Select Region" modal. We try to click "Stay on this site" or "Close".
             try:
-                print("   -> Waiting for price symbol ($)...", flush=True)
-                page.wait_for_selector("text=$", timeout=15000)
-                print("   -> Found a '$' sign on page!", flush=True)
-            except:
-                print("   -> No '$' appeared yet (might need size selection).", flush=True)
+                page.wait_for_timeout(3000) # Wait 3s for popup to animate
+                print("   -> Checking for popups...", flush=True)
+                
+                # List of common Aritzia popup close buttons / "Stay" buttons
+                popup_selectors = [
+                    'button[aria-label="Close"]', 
+                    '.close-button',
+                    'button:has-text("Stay on this Site")', 
+                    'button:has-text("No, thanks")',
+                    'div[role="dialog"] button' 
+                ]
+                
+                for sel in popup_selectors:
+                    if page.is_visible(sel):
+                        page.click(sel)
+                        print(f"   -> 💥 Smashed a popup: {sel}", flush=True)
+                        page.wait_for_timeout(1000) # Wait for it to disappear
+            except Exception as e:
+                print(f"   -> Popup check error (ignoring): {e}", flush=True)
 
-            # FORCE SCREENSHOT (Evidence)
+            # --- SCROLL TO REVEAL ---
+            # Aritzia lazily loads prices. We must scroll down slightly.
+            page.mouse.wheel(0, 500)
+            page.wait_for_timeout(2000)
+
+            # --- TAKE EVIDENCE ---
             page.screenshot(path="aritzia_debug.png")
             print("   📸 Screenshot saved: aritzia_debug.png", flush=True)
 
-            # FINAL ATTEMPT: Dump all text that looks like a number
-            body_text = page.inner_text("body")
-            import re
-            # Find any number following a dollar sign
-            matches = re.findall(r'\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', body_text)
-            
+            # --- EXTRACT PRICE ---
+            # We use the EXACT ID from your screenshot
+            # data-testid="product-list-price-text"
+            try:
+                # Wait explicitly for the element you saw in the inspector
+                page.wait_for_selector('[data-testid="product-list-price-text"]', timeout=10000)
+            except:
+                print("   -> Target ID not found immediately, checking backup...", flush=True)
+
+            content = page.content()
             browser.close()
+            
+            soup = BeautifulSoup(content, "html.parser")
+            
+            # 1. Primary Target (From your Screenshot)
+            price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
+            
+            # 2. Backup Target (Parent container)
+            if not price_tag:
+                price_tag = soup.find(attrs={"data-testid": "product-price-text"})
 
-            if matches:
-                # Convert to floats and find the max price
-                prices = [float(m.replace(",", "")) for m in matches]
-                final_price = max(prices)
-                print(f"   Found Price via Search: {final_price}", flush=True)
-                return final_price
-
-            print("❌ No price found in text.", flush=True)
+            if price_tag:
+                raw_text = price_tag.text.strip()
+                print(f"   ✅ FOUND RAW TEXT: {raw_text}", flush=True)
+                
+                # Clean "$425" -> 425.0
+                clean = raw_text.replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
+                if "-" in clean: clean = clean.split("-")[0].strip()
+                return float(clean)
+                
+            print("❌ Price tag not found in HTML (Check screenshot artifact)", flush=True)
             return None
 
     except Exception as e:
