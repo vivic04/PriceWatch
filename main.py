@@ -16,83 +16,69 @@ def fetch_with_browser(url):
     
     try:
         with sync_playwright() as p:
-            # Launch options to look real
             browser = p.chromium.launch(
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
             )
+            # Create a 1080p window so the layout matches your screenshot
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080} # Desktop size
+                viewport={"width": 1920, "height": 1080}
             )
             page = context.new_page()
             
             print("   -> Loading Page...", flush=True)
             page.goto(url, timeout=90000)
-            
-            # --- POPUP KILLER ---
-            # Aritzia often shows a "Select Region" modal. We try to click "Stay on this site" or "Close".
+
+            # --- INTERACTION STEP ---
+            # Click "Select a Size" to force the price to load
             try:
-                page.wait_for_timeout(3000) # Wait 3s for popup to animate
-                print("   -> Checking for popups...", flush=True)
+                print("   -> Clicking 'Select a Size'...", flush=True)
+                # We target the specific text from your screenshot
+                page.click("text=Select a Size", timeout=5000)
+                page.wait_for_timeout(1000)
                 
-                # List of common Aritzia popup close buttons / "Stay" buttons
-                popup_selectors = [
-                    'button[aria-label="Close"]', 
-                    '.close-button',
-                    'button:has-text("Stay on this Site")', 
-                    'button:has-text("No, thanks")',
-                    'div[role="dialog"] button' 
-                ]
-                
-                for sel in popup_selectors:
-                    if page.is_visible(sel):
-                        page.click(sel)
-                        print(f"   -> 💥 Smashed a popup: {sel}", flush=True)
-                        page.wait_for_timeout(1000) # Wait for it to disappear
-            except Exception as e:
-                print(f"   -> Popup check error (ignoring): {e}", flush=True)
-
-            # --- SCROLL TO REVEAL ---
-            # Aritzia lazily loads prices. We must scroll down slightly.
-            page.mouse.wheel(0, 500)
-            page.wait_for_timeout(2000)
-
-            # --- TAKE EVIDENCE ---
-            page.screenshot(path="aritzia_debug.png")
-            print("   📸 Screenshot saved: aritzia_debug.png", flush=True)
-
-            # --- EXTRACT PRICE ---
-            # We use the EXACT ID from your screenshot
-            # data-testid="product-list-price-text"
-            try:
-                # Wait explicitly for the element you saw in the inspector
-                page.wait_for_selector('[data-testid="product-list-price-text"]', timeout=10000)
+                # Click the first available size in the dropdown
+                # This usually triggers the "Price Update" event
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+                print("   -> Selected a size (S/M/L).", flush=True)
+                page.wait_for_timeout(3000) # Give it 3s to update the price
             except:
-                print("   -> Target ID not found immediately, checking backup...", flush=True)
+                print("   -> Could not select size (might be one-size or different layout).", flush=True)
 
+            # --- EVIDENCE ---
+            page.screenshot(path="aritzia_final.png")
+            print("   📸 Screenshot saved: aritzia_final.png", flush=True)
+
+            # --- FINAL PRICE EXTRACT ---
+            # Now we look for the ID from your OTHER screenshot (image_e0be46.png)
             content = page.content()
             browser.close()
             
             soup = BeautifulSoup(content, "html.parser")
             
-            # 1. Primary Target (From your Screenshot)
+            # 1. The ID you found in the inspector
             price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
             
-            # 2. Backup Target (Parent container)
+            # 2. Fallback: Search for the text "$425" (or whatever number) visually
             if not price_tag:
-                price_tag = soup.find(attrs={"data-testid": "product-price-text"})
+                 # Look for any text that starts with $ and has digits
+                import re
+                body_text = soup.get_text()
+                # Find "$ 425" or "$425"
+                match = re.search(r'\$\s*(\d{2,5})', body_text)
+                if match:
+                    print(f"   ✅ Found Price in Text: {match.group(1)}", flush=True)
+                    return float(match.group(1))
 
             if price_tag:
                 raw_text = price_tag.text.strip()
                 print(f"   ✅ FOUND RAW TEXT: {raw_text}", flush=True)
-                
-                # Clean "$425" -> 425.0
                 clean = raw_text.replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
-                if "-" in clean: clean = clean.split("-")[0].strip()
                 return float(clean)
                 
-            print("❌ Price tag not found in HTML (Check screenshot artifact)", flush=True)
+            print("❌ Price still hidden. (Check aritzia_final.png)", flush=True)
             return None
 
     except Exception as e:
