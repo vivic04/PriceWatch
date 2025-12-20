@@ -21,48 +21,62 @@ def fetch_with_browser(url):
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
             )
             context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 720}
             )
             page = context.new_page()
             
             print("   -> Loading Page...", flush=True)
             page.goto(url, timeout=60000)
             
-            # WAIT a bit for any redirects (like Cloudflare)
-            page.wait_for_timeout(5000) 
-
-            # --- DEBUG: WHAT ARE WE LOOKING AT? ---
-            title = page.title()
-            body_text = page.inner_text('body')[:300].replace('\n', ' ')
-            print(f"   🔎 PAGE TITLE: {title}", flush=True)
-            print(f"   🔎 PAGE TEXT: {body_text}...", flush=True)
-            # --------------------------------------
-
-            # Normal parsing logic...
+            # 1. WAIT FOR THE PRODUCT TITLE (This confirms the main content loaded)
             try:
-                page.wait_for_selector('[data-testid="product-list-price-text"]', timeout=5000)
+                page.wait_for_selector('h1', timeout=15000)
+                print("   -> Product title loaded.", flush=True)
             except:
-                pass # Don't crash, just let us see the debug prints
+                print("   -> Title not found, proceeding anyway...", flush=True)
 
-            content = page.content()
-            browser.close()
+            # 2. GRAB ALL VISIBLE TEXT
+            body_text = page.inner_text("body")
             
-            soup = BeautifulSoup(content, "html.parser")
-            price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
-            if not price_tag:
-                price_tag = soup.find(attrs={"data-testid": "product-price-text"})
+            browser.close()
+
+            # 3. PATTERN MATCHING (Find "$425" or "425.00")
+            print("   -> Scanning text for prices...", flush=True)
+            
+            # Regex Explanation:
+            # \$?       -> Optional dollar sign
+            # \s* -> Optional whitespace
+            # (\d{1,3}(?:,\d{3})*(?:\.\d{2})?) -> Captures 425, 1,000.00, or 50.99
+            import re
+            # Look for price patterns specifically near "CAD" or "$"
+            matches = re.findall(r'(?:CAD|\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', body_text)
+            
+            if matches:
+                # Convert strings to floats
+                prices = []
+                for m in matches:
+                    try:
+                        # Remove commas (1,000 -> 1000)
+                        val = float(m.replace(",", ""))
+                        if val > 0: prices.append(val)
+                    except: continue
                 
-            if price_tag:
-                clean = price_tag.text.strip().replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
-                return float(clean)
-                
-            print("❌ Price tag not found.", flush=True)
+                if prices:
+                    # Logic: The real price is usually the LARGEST number found 
+                    # (to avoid capturing "4 interest-free payments of $20")
+                    # But sometimes "Compare at $1000" is higher.
+                    # For Aritzia, the current price is usually the max found on the main view.
+                    final_price = max(prices)
+                    print(f"   Found Price via Text Scan: {final_price}", flush=True)
+                    return final_price
+
+            print("❌ No price patterns found in page text.", flush=True)
             return None
 
     except Exception as e:
         print(f"❌ Browser Error: {e}", flush=True)
         return None
-    
 # --- 2. THE REQUEST ENGINE (For eBay / Fast Sites) ---
 def fetch_ebay(url):
     clean_url = url.split("?")[0]
