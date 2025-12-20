@@ -36,36 +36,60 @@ def fetch_aritzia(url):
     print(f"👗 Aritzia Detected: {url}", flush=True)
     try:
         clean_url = url.split("?")[0]
-        response = requests.get(clean_url, impersonate="chrome110", timeout=30)
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # STRATEGY 1: The "Test ID" (From your screenshot)
-        # We look for any tag that has this specific data-testid attribute
-        price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
         
-        # Backup: Sometimes it's called 'product-price-text' (the parent container)
-        if not price_tag:
-            price_tag = soup.find(attrs={"data-testid": "product-price-text"})
-
-        if price_tag:
-            raw_text = price_tag.text.strip()
-            print(f"   Found Raw Price: {raw_text}", flush=True)
+        # TRICK 1: Pretend to be an iPhone (Mobile User-Agent)
+        # This often forces the server to send pre-loaded HTML
+        mobile_headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+        }
+        
+        # Note: We pass headers=mobile_headers explicitly here
+        response = requests.get(clean_url, headers=mobile_headers, impersonate="chrome110", timeout=30)
+        
+        # TRICK 2: The "Ctrl+F" Search (Regex)
+        # We ignore HTML structure and just hunt for the JSON data keys
+        # We look for patterns like: "price": 425.0 or "salePrice": 425
+        
+        import re
+        
+        # Pattern A: Look for "sale_price" or "price" followed by a number
+        # Matches: "price": 425.00  OR  "price":425
+        matches = re.findall(r'["\'](?:sale_price|price|original_price)["\']\s*:\s*["\']?(\d+\.?\d*)["\']?', response.text)
+        
+        if matches:
+            # We might find multiple prices (e.g. 0.0, 425.0). 
+            # Convert all to floats and pick the largest logical one (usually the real price)
+            valid_prices = []
+            for m in matches:
+                try:
+                    p = float(m)
+                    if p > 0: valid_prices.append(p)
+                except: continue
             
-            # Clean it: "$425" -> 425.0
-            # Remove symbols, CAD, and whitespace
-            clean_text = raw_text.replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
-            
-            # Handle ranges (e.g. "100 - 150") by taking the first number
-            if "-" in clean_text:
-                clean_text = clean_text.split("-")[0].strip()
-                
-            return float(clean_text)
+            if valid_prices:
+                # Aritzia sometimes lists the price in cents (e.g. 42500)
+                # If we find a huge number, divide by 100
+                final_price = max(valid_prices)
+                if final_price > 1000: 
+                    final_price = final_price / 100
+                    
+                print(f"   Found Price via Regex Scan: {final_price}", flush=True)
+                return float(final_price)
 
-        print("❌ Aritzia price tag not found. (Page might be loading via JavaScript)", flush=True)
+        # TRICK 3: Look for the specific 'utag_data' (Aritzia's analytics layer)
+        if "utag_data" in response.text:
+             # Look for "product_price":["425.00"]
+             utag_match = re.search(r'["\']product_price["\']\s*:\s*\[?["\'](\d+\.?\d*)["\']', response.text)
+             if utag_match:
+                 print(f"   Found Price in Data Layer: {utag_match.group(1)}", flush=True)
+                 return float(utag_match.group(1))
+
+        print("❌ Aritzia data completely hidden. They require a Browser (Selenium) to view.", flush=True)
         return None
 
     except Exception as e:
         print(f"❌ Aritzia Error: {e}", flush=True)
+        return None
         return None
 def fetch_toscrape(url):
     # Sandbox parser for testing
