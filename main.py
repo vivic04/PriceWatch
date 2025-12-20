@@ -2,82 +2,110 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import os
+from urllib.parse import urlparse
 
-# --- 1. SETUP ---
-# We get the URL from the "Safe" box (Environment Variable)
-# If it's not found, we warn you but don't crash
+# --- CONFIG ---
 WEBHOOK_URL = os.environ.get("DISCORD_URL") 
 DB_FILE = "price_history.json"
 
-my_books = [
-    "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
-    "http://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html",
-    "http://books.toscrape.com/catalogue/soumission_998/index.html"
-]
+# REAL WORLD HEADER: This makes us look like a Chrome Browser on Windows
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
-def send_discord_alert(message):
-    if not WEBHOOK_URL:
-        print(f"NO DISCORD URL FOUND. Mock Alert: {message}")
-        return
+# --- PARSERS (The Tools) ---
 
-    data = {"content": message}
-    try:
-        requests.post(WEBHOOK_URL, json=data)
-        print("Sent alert to Discord!")
-    except Exception as e:
-        print(f"Failed to send alert: {e}")
+def parse_toscrape(soup):
+    """Logic specifically for books.toscrape.com"""
+    price_element = soup.find('p', class_='price_color')
+    if price_element:
+        # Returns "£51.77" -> 51.77
+        return float(price_element.text[2:])
+    return None
 
-def get_book_price(url):
-    try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        price_element = soup.find('p', class_='price_color')
+def parse_ebay(soup):
+    """Logic specifically for eBay"""
+    # eBay usually keeps price in 'x-price-primary' or 'prcIsum'
+    # We try one, if it fails, try the other
+    price_element = soup.find('div', class_='x-price-primary')
+    if not price_element:
+        price_element = soup.find('span', id='prcIsum')
         
-        if price_element:
-            price_text = price_element.text  # "£51.77"
-            # If you are unsure, print(price_text) to check!
-            clean_price = price_text[2:]     
-            return float(clean_price)
-        else:
+    if price_element:
+        # eBay often has "US $20.00", we need to split the text to find the number
+        text = price_element.text.strip()
+        # Remove '$', 'US', and commas
+        clean_text = text.replace("US", "").replace("$", "").replace(",", "").strip()
+        try:
+            return float(clean_text)
+        except:
             return None
+    return None
+
+# --- THE ROUTER (The Brain) ---
+
+def get_price(url):
+    try:
+        print(f"Fetching: {url}")
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"⚠️ Blocked or Error ({response.status_code})")
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        domain = urlparse(url).netloc # Extracts "www.ebay.com" or "books.toscrape.com"
+
+        # This is the "Switchboard"
+        if "toscrape.com" in domain:
+            return parse_toscrape(soup)
+        elif "ebay.com" in domain:
+            return parse_ebay(soup)
+        # elif "amazon.com" in domain:  <-- We will add this later
+        #    return parse_amazon(soup)
+        else:
+            print(f"❌ Error: No parser built for {domain} yet!")
+            return None
+
     except Exception as e:
-        print(f"Error scraping {url}: {e}")
+        print(f"CRITICAL ERROR: {e}")
         return None
 
+# --- MAIN LOGIC ---
+# Now we can mix and match websites!
+my_items = [
+    "https://www.ebay.ca/itm/376654197486?_trkparms=amclksrc%3DITM%26aid%3D777008%26algo%3DPERSONAL.TOPIC%26ao%3D1%26asc%3D20231108131718%26meid%3Dfdc1e452fde2404783de461ad90e4eb4%26pid%3D101910%26rk%3D1%26rkt%3D1%26itm%3D376654197486%26pmt%3D0%26noa%3D1%26pg%3D4375194%26algv%3DFeaturedDealsV2&_trksid=p4375194.c101910.m150506&_trkparms=parentrq%3A3985137219b0aab2babafa2bfffc93d8%7Cpageci%3Af1d4957b-dd48-11f0-a4c7-ae57a5ce080f%7Ciid%3A1%7Cvlpname%3Avlp_homepage"
+]
+
 def check_prices():
-    # --- LOAD DATABASE ---
-    # On GitHub Actions, we will restore this file before running
     if os.path.exists(DB_FILE):
         with open(DB_FILE, 'r') as f:
             price_history = json.load(f)
     else:
         price_history = {}
-        print("No history found. Starting fresh.")
 
-    # --- CHECK PRICES ---
-    for book_url in my_books:
-        current_price = get_book_price(book_url)
+    for url in my_items:
+        price = get_price(url)
         
-        if current_price is None:
-            continue
-
-        if book_url in price_history:
-            old_price = price_history[book_url]
-            # Check for difference
-            if current_price != old_price:
-                msg = f"🚨 PRICE CHANGE! {old_price} -> {current_price} | {book_url}"
-                send_discord_alert(msg)
-                price_history[book_url] = current_price
+        if price:
+            print(f"✅ Price found: {price}")
+            
+            # Logic to check vs history
+            if url in price_history:
+                old_price = price_history[url]
+                if price != old_price:
+                    msg = f"🚨 CHANGE: {old_price} -> {price} | {url}"
+                    if WEBHOOK_URL:
+                        requests.post(WEBHOOK_URL, json={"content": msg})
+                    price_history[url] = price
             else:
-                print(f"No change for {book_url} ({current_price})")
+                price_history[url] = price
         else:
-            print(f"First time tracking: {book_url}")
-            price_history[book_url] = current_price
+            print(f"Failed to extract price for {url}")
 
-    # --- SAVE DATABASE ---
     with open(DB_FILE, 'w') as f:
         json.dump(price_history, f)
-    print("Database updated.")
 
 if __name__ == "__main__":
     check_prices()
