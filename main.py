@@ -1,96 +1,143 @@
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 import json
 import os
-from urllib.parse import urlparse
+import re # We need Regex to find hidden JSON data
 
 # --- CONFIG ---
 WEBHOOK_URL = os.environ.get("DISCORD_URL") 
 DB_FILE = "price_history.json"
+TRACKING_FILE = "tracking_list.json"
 
-# REAL WORLD HEADERS: Updated to look more like a standard browser
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-}
-
-# --- PARSERS (The Tools) ---
-
-def parse_toscrape(soup):
-    """Logic specifically for books.toscrape.com"""
-    price_element = soup.find('p', class_='price_color')
-    if price_element:
-        return float(price_element.text[1:])
-    return None
-
-def parse_ebay(soup):
-    """Logic specifically for eBay (Works for .com, .ca, .co.uk, etc)"""
-    # eBay tries to hide prices in different places. We check the most common ones.
+def fetch_ebay(url):
+    print(f"🕵️  eBay Detected: Using Browser Impersonation for {url}")
     
-    # 1. Try the standard 'main price' div
-    price_element = soup.find('div', class_='x-price-primary')
-    
-    # 2. If that fails, try the older ID style
-    if not price_element:
-        price_element = soup.find('span', id='prcIsum')
-    
-    # 3. If that fails, try the 'shipping included' style
-    if not price_element:
-        price_element = soup.find('div', class_='main-price-with-shipping')
-
-    if price_element:
-        text = price_element.text.strip()
-        # Clean up currency symbols (CAD, US, $, etc.)
-        # We remove letters and $ signs, keeping only numbers and dots
-        clean_text = text.replace("C", "").replace("US", "").replace("$", "").replace(",", "").strip()
-        
-        # Sometimes eBay puts "Approx" in front. Remove that.
-        if "Approx" in clean_text:
-            clean_text = clean_text.split("Approx")[1]
-            
-        try:
-            return float(clean_text)
-        except:
-            print(f"Could not convert '{text}' to number")
-            return None
-    
-    print("Debug: eBay price element not found in HTML.")
-    return None
-
-# --- THE ROUTER (The Brain) ---
-
-def get_price(url):
     try:
-        # CLEAN THE URL: Remove everything after the '?'
+        # CLEAN THE URL
         clean_url = url.split("?")[0]
         
-        print(f"Fetching: {clean_url}")
-        
-        # INCREASED TIMEOUT: From 10 -> 30 seconds
-        response = requests.get(clean_url, headers=HEADERS, timeout=30)
+        # THE MAGIC LINE: 'impersonate="chrome"'
+        # This spoofs the TLS Handshake (The "Secret Handshake")
+        response = requests.get(
+            clean_url, 
+            impersonate="chrome", 
+            timeout=30
+        )
         
         if response.status_code != 200:
-            print(f"⚠️ Blocked or Error ({response.status_code})")
+            print(f"⚠️ eBay Blocked: Status {response.status_code}")
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
-        domain = urlparse(clean_url).netloc 
+        
+        # eBay Parsing Logic
+        price_element = soup.find('div', class_='x-price-primary')
+        if not price_element:
+            price_element = soup.find('span', id='prcIsum')
+        if not price_element:
+             price_element = soup.find('div', class_='main-price-with-shipping')
 
-        # UPDATED SWITCHBOARD: Checks for 'ebay.' anywhere in the domain name
-        if "toscrape.com" in domain:
-            return parse_toscrape(soup)
-        elif "ebay." in domain: 
-            return parse_ebay(soup)
+        if price_element:
+            text = price_element.text.strip()
+            print(f"   Raw Text Found: {text}") # Debug print
+            clean_text = text.replace("C", "").replace("US", "").replace("$", "").replace(",", "").strip()
+            if "Approx" in clean_text:
+                clean_text = clean_text.split("Approx")[1]
+            return float(clean_text)
         else:
-            print(f"❌ Error: No parser built for {domain} yet!")
+            print("❌ Price tag not found (Check HTML structure)")
             return None
 
     except Exception as e:
-        print(f"CRITICAL ERROR: {e}")
+        print(f"❌ eBay Error: {e}")
         return None
 
+# --- 1. ZARA / ARITZIA (The "Hidden JSON" Strategy) ---
+def fetch_zara(url):
+    print(f"👗 Zara/Fashion Detected: {url}")
+    try:
+        # Impersonate Chrome to get the full page
+        response = requests.get(url, impersonate="chrome", timeout=30)
+        
+        # CHEAT CODE: Zara hides data in a script tag to load it fast.
+        # We don't scrape HTML; we scrape the hidden database.
+        
+        # Look for the script containing "product" data
+        # This regex looks for a pattern like: window.zara.viewPayload = {...}
+        # Note: This pattern changes every few months!
+        matches = re.findall(r"window\.zara\.viewPayload\s*=\s*({.*?});", response.text)
+        
+        if not matches:
+            # Fallback to standard HTML parsing if hidden JSON fails
+            soup = BeautifulSoup(response.text, "html.parser")
+            price_tag = soup.find("span", class_="price-current__amount")
+            if price_tag:
+                clean = price_tag.text.strip().replace("CAD", "").replace("$", "")
+                return float(clean)
+            return None
+
+        # If we found the hidden JSON:
+        data = json.loads(matches[0])
+        # Navigate the JSON (You must inspect the JSON structure manually to find the path)
+        # This is an example path:
+        price = data['product']['detail']['colors'][0]['price'] / 100 
+        return float(price)
+
+    except Exception as e:
+        print(f"❌ Zara Error: {e}")
+        return None
+
+# --- 2. AMAZON (The "Fort Knox" Strategy) ---
+def fetch_amazon(url):
+    print(f"📦 Amazon Detected: {url}")
+    try:
+        # Amazon requires the BEST impersonation.
+        # If this fails, you MUST use proxies.
+        response = requests.get(url, impersonate="chrome110", timeout=30)
+        
+        # Amazon loves to show CAPTCHAs (200 OK but text says "Enter characters")
+        if "api-services-support@amazon.com" in response.text:
+            print("⚠️ Amazon CAPTCHA detected (Soft Block)")
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Amazon has 3-4 different price selectors
+        selectors = [
+            ".a-price .a-offscreen",           # Standard
+            "#priceblock_ourprice",            # Old style
+            "#priceblock_dealprice",           # Deal style
+            "span.a-color-price"               # Books/Kindle
+        ]
+        
+        for sel in selectors:
+            element = soup.select_one(sel)
+            if element:
+                clean = element.text.strip().replace("$", "").replace(",", "")
+                print(f"   Found price: {clean}")
+                return float(clean)
+                
+        return None
+
+    except Exception as e:
+        print(f"❌ Amazon Error: {e}")
+        return None
+
+# --- ROUTER (The "Brain") ---
+def get_price(url):
+    domain = url
+    if "zara" in domain:
+        return fetch_zara(url)
+    elif "amazon" in domain:
+        return fetch_amazon(url)
+    elif "ebay" in domain:
+        # Put your existing eBay function here!
+        return fetch_ebay(url) 
+    else:
+        print("Unknown Domain")
+        return None
+
+# ... (Keep your load_tracking_list and main loop the same)
 # --- MAIN LOGIC ---
 TRACKING_FILE = "tracking_list.json"
 

@@ -1,10 +1,15 @@
 [
     {
-        "url": "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
-        "note": "Test Book"
-    },
-    {
         "url": "https://www.ebay.ca/itm/376654197486",
         "note": "My eBay Item"
+    },
+    {
+        "url": "https://www.amazon.ca/Bluetooth-Anker-SoundCore-Dual-Driver-Distortion/dp/B016XTADG2/?_encoding=UTF8&pd_rd_w=JBvn9&content-id=amzn1.sym.b72a7db1-2e40-43b1-9a87-c772f9c9cf18%3Aamzn1.symc.5a16118f-86f0-44cd-8e3e-6c5f82df43d0&pf_rd_p=b72a7db1-2e40-43b1-9a87-c772f9c9cf18&pf_rd_r=EQ2KQHAA3AQQTSP3DSR2&pd_rd_wg=Xr5MR&pd_rd_r=fe3d408a-4feb-4011-a2f1-6c4b61f8eb4f&ref_=pd_hp_d_atf_ci_mcx_mr_ca_hp_atf_d",
+        "note": "My Amazon Item"
+    },
+    {
+        "url": "https://www.zara.com/ca/en/textured-pocket-cardigan-p09598402.html?v1=495679983&v2=2432265",
+        "note": "My Zara Item"
     }
+
 ]
