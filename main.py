@@ -75,7 +75,7 @@ def get_price(url):
 # --- MAIN LOGIC ---
 # Now we can mix and match websites!
 my_items = [
-    "https://www.ebay.ca/itm/376654197486?_trkparms=amclksrc%3DITM%26aid%3D777008%26algo%3DPERSONAL.TOPIC%26ao%3D1%26asc%3D20231108131718%26meid%3Dfdc1e452fde2404783de461ad90e4eb4%26pid%3D101910%26rk%3D1%26rkt%3D1%26itm%3D376654197486%26pmt%3D0%26noa%3D1%26pg%3D4375194%26algv%3DFeaturedDealsV2&_trksid=p4375194.c101910.m150506&_trkparms=parentrq%3A3985137219b0aab2babafa2bfffc93d8%7Cpageci%3Af1d4957b-dd48-11f0-a4c7-ae57a5ce080f%7Ciid%3A1%7Cvlpname%3Avlp_homepage"
+    "https://www.ebay.ca/itm/376654197486"
 ]
 
 def check_prices():
