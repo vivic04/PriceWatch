@@ -1,0 +1,10 @@
+[
+    {
+        "url": "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
+        "note": "Test Book"
+    },
+    {
+        "url": "https://www.ebay.ca/itm/376654197486",
+        "note": "My eBay Item"
+    }
+]

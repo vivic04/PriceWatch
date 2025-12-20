@@ -92,11 +92,21 @@ def get_price(url):
         return None
 
 # --- MAIN LOGIC ---
-my_items = [
-    "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
-    # I kept your original link but it will be cleaned automatically by the script
-    "https://www.ebay.ca/itm/376654197486" 
-]
+TRACKING_FILE = "tracking_list.json"
+
+def load_tracking_list():
+    """Reads the list of URLs from an external file"""
+    if os.path.exists(TRACKING_FILE):
+        with open(TRACKING_FILE, 'r') as f:
+            return json.load(f)
+    else:
+        print(f"⚠️ Warning: {TRACKING_FILE} not found. Creating a template.")
+        # Create a dummy file so the user sees where to put links
+        dummy_data = [{"url": "PUT_URL_HERE", "note": "Example Item"}]
+        with open(TRACKING_FILE, 'w') as f:
+            json.dump(dummy_data, f, indent=4)
+        return []
+    
 
 def check_prices():
     if os.path.exists(DB_FILE):
@@ -105,7 +115,7 @@ def check_prices():
     else:
         price_history = {}
 
-    for url in my_items:
+    for url in load_tracking_list:
         price = get_price(url)
         
         if price:
