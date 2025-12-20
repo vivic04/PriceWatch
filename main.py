@@ -29,54 +29,41 @@ def fetch_with_browser(url):
             print("   -> Loading Page...", flush=True)
             page.goto(url, timeout=60000)
             
-            # 1. WAIT FOR THE PRODUCT TITLE (This confirms the main content loaded)
+            # STRATEGY: Wait for money!
+            # We wait up to 15 seconds for ANY text containing '$' to appear
             try:
-                page.wait_for_selector('h1', timeout=15000)
-                print("   -> Product title loaded.", flush=True)
+                print("   -> Waiting for price symbol ($)...", flush=True)
+                page.wait_for_selector("text=$", timeout=15000)
+                print("   -> Found a '$' sign on page!", flush=True)
             except:
-                print("   -> Title not found, proceeding anyway...", flush=True)
+                print("   -> No '$' appeared yet (might need size selection).", flush=True)
 
-            # 2. GRAB ALL VISIBLE TEXT
+            # FORCE SCREENSHOT (Evidence)
+            page.screenshot(path="aritzia_debug.png")
+            print("   📸 Screenshot saved: aritzia_debug.png", flush=True)
+
+            # FINAL ATTEMPT: Dump all text that looks like a number
             body_text = page.inner_text("body")
+            import re
+            # Find any number following a dollar sign
+            matches = re.findall(r'\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', body_text)
             
             browser.close()
 
-            # 3. PATTERN MATCHING (Find "$425" or "425.00")
-            print("   -> Scanning text for prices...", flush=True)
-            
-            # Regex Explanation:
-            # \$?       -> Optional dollar sign
-            # \s* -> Optional whitespace
-            # (\d{1,3}(?:,\d{3})*(?:\.\d{2})?) -> Captures 425, 1,000.00, or 50.99
-            import re
-            # Look for price patterns specifically near "CAD" or "$"
-            matches = re.findall(r'(?:CAD|\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', body_text)
-            
             if matches:
-                # Convert strings to floats
-                prices = []
-                for m in matches:
-                    try:
-                        # Remove commas (1,000 -> 1000)
-                        val = float(m.replace(",", ""))
-                        if val > 0: prices.append(val)
-                    except: continue
-                
-                if prices:
-                    # Logic: The real price is usually the LARGEST number found 
-                    # (to avoid capturing "4 interest-free payments of $20")
-                    # But sometimes "Compare at $1000" is higher.
-                    # For Aritzia, the current price is usually the max found on the main view.
-                    final_price = max(prices)
-                    print(f"   Found Price via Text Scan: {final_price}", flush=True)
-                    return final_price
+                # Convert to floats and find the max price
+                prices = [float(m.replace(",", "")) for m in matches]
+                final_price = max(prices)
+                print(f"   Found Price via Search: {final_price}", flush=True)
+                return final_price
 
-            print("❌ No price patterns found in page text.", flush=True)
+            print("❌ No price found in text.", flush=True)
             return None
 
     except Exception as e:
         print(f"❌ Browser Error: {e}", flush=True)
         return None
+    
 # --- 2. THE REQUEST ENGINE (For eBay / Fast Sites) ---
 def fetch_ebay(url):
     clean_url = url.split("?")[0]
