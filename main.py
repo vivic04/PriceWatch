@@ -54,75 +54,82 @@ def fetch_ebay(url):
 
 # --- 1. ZARA / ARITZIA (The "Hidden JSON" Strategy) ---
 def fetch_zara(url):
-    print(f"👗 Zara/Fashion Detected: {url}")
+    print(f"👗 Zara Detected: Hunting for hidden JSON data...")
     try:
-        # Impersonate Chrome to get the full page
         response = requests.get(url, impersonate="chrome", timeout=30)
         
-        # CHEAT CODE: Zara hides data in a script tag to load it fast.
-        # We don't scrape HTML; we scrape the hidden database.
+        # 1. Regex Search: Look for the specific pattern Zara uses to store data
+        # They often store it in a variable called "product" or inside "viewPayload"
+        # We look for the price section directly to be safe
         
-        # Look for the script containing "product" data
-        # This regex looks for a pattern like: window.zara.viewPayload = {...}
-        # Note: This pattern changes every few months!
-        matches = re.findall(r"window\.zara\.viewPayload\s*=\s*({.*?});", response.text)
+        # Strategy: Look for "price":1234 (Zara stores prices as integers, e.g., 4599 for $45.99)
+        # This is a bit "hacky" but works when the JSON structure changes
+        matches = re.findall(r'"price":\s*(\d+)', response.text)
         
-        if not matches:
-            # Fallback to standard HTML parsing if hidden JSON fails
-            soup = BeautifulSoup(response.text, "html.parser")
-            price_tag = soup.find("span", class_="price-current__amount")
-            if price_tag:
-                clean = price_tag.text.strip().replace("CAD", "").replace("$", "")
-                return float(clean)
-            return None
-
-        # If we found the hidden JSON:
-        data = json.loads(matches[0])
-        # Navigate the JSON (You must inspect the JSON structure manually to find the path)
-        # This is an example path:
-        price = data['product']['detail']['colors'][0]['price'] / 100 
-        return float(price)
+        if matches:
+            # Zara usually lists the main price first or multiple times.
+            # We take the largest number found (to avoid finding "0" or discount placeholders)
+            prices = [int(p) for p in matches]
+            max_price = max(prices)
+            
+            # Convert 4599 -> 45.99
+            final_price = max_price / 100
+            print(f"   Found hidden price in script: {final_price}")
+            return float(final_price)
+            
+        print("❌ Zara JSON not found. They might have changed their code.")
+        return None
 
     except Exception as e:
         print(f"❌ Zara Error: {e}")
         return None
-
 # --- 2. AMAZON (The "Fort Knox" Strategy) ---
 def fetch_amazon(url):
     print(f"📦 Amazon Detected: {url}")
     try:
-        # Amazon requires the BEST impersonation.
-        # If this fails, you MUST use proxies.
+        # Amazon requires the newest Chrome impersonation
         response = requests.get(url, impersonate="chrome110", timeout=30)
         
-        # Amazon loves to show CAPTCHAs (200 OK but text says "Enter characters")
-        if "api-services-support@amazon.com" in response.text:
-            print("⚠️ Amazon CAPTCHA detected (Soft Block)")
+        # 1. THE BLOCK CHECK
+        if "api-services-support@amazon.com" in response.text or "Enter the characters you see below" in response.text:
+            print("🛑 AMAZON BLOCKED YOU (CAPTCHA Page).")
+            print("   Solution: You need a Residential Proxy to fix this.")
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Amazon has 3-4 different price selectors
+        # 2. SELECTOR ROULETTE (Try everything)
         selectors = [
-            ".a-price .a-offscreen",           # Standard
-            "#priceblock_ourprice",            # Old style
-            "#priceblock_dealprice",           # Deal style
-            "span.a-color-price"               # Books/Kindle
+            ".a-price .a-offscreen",           # Most common
+            "#priceblock_ourprice",            # Older items
+            "#priceblock_dealprice",           # On sale
+            "span.a-color-price",              # Books
+            ".a-price-whole"                   # Just the main number
         ]
         
         for sel in selectors:
             element = soup.select_one(sel)
             if element:
-                clean = element.text.strip().replace("$", "").replace(",", "")
-                print(f"   Found price: {clean}")
-                return float(clean)
-                
+                clean = element.text.strip().replace("$", "").replace(",", "").replace(".", "")
+                # Amazon might return "24" and "99" separately.
+                # If we get a whole number, assume it's the dollars.
+                # For safety, let's just grab the first valid float we see.
+                try:
+                    # Quick fix for currency formatting issues
+                    import re
+                    # Extract just the numbers and dot (e.g. "24.99")
+                    found_price = re.search(r'\d+\.\d+', element.text)
+                    if found_price:
+                        return float(found_price.group())
+                except:
+                    continue
+
+        print("❌ Page loaded, but no price found (Amazon might have changed layout)")
         return None
 
     except Exception as e:
         print(f"❌ Amazon Error: {e}")
         return None
-
 # --- ROUTER (The "Brain") ---
 def get_price(url):
     domain = url
