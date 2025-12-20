@@ -7,115 +7,92 @@ import re
 # --- CONFIG ---
 WEBHOOK_URL = os.environ.get("DISCORD_URL") 
 DB_FILE = "price_history.json"
-TRACKING_FILE = "tracking_list.json"
 
-# --- 1. ZARA (The "SEO" Strategy) ---
+# --- 1. ZARA (The SEO Strategy) ---
 def fetch_zara(url):
-    print(f"👗 Zara Detected: Checking public SEO data...")
+    print(f"👗 Zara Detected: Checking public SEO data for {url}", flush=True)
     try:
-        # 1. Clean URL and Fetch
         response = requests.get(url, impersonate="chrome110", timeout=30)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # 2. Look for the "Product" tag that Google reads
-        # This is usually a script called "application/ld+json"
+        # Strategy: Look for the data Zara sends to Google (ld+json)
         schema_tags = soup.find_all("script", type="application/ld+json")
         
         for tag in schema_tags:
             try:
                 data = json.loads(tag.string)
+                if isinstance(data, list): data = data[0]
                 
-                # Sometimes the data is a list, sometimes a dict
-                if isinstance(data, list):
-                    data = data[0]
-                
-                # Check if this valid Product data
+                # Check if this is the product info
                 if data.get("@type") == "Product":
-                    # Grab the price from the "offers" section
                     offers = data.get("offers", {})
-                    
-                    # Sometimes offers is a list (multiple sizes)
-                    if isinstance(offers, list):
-                        price = offers[0].get("price")
-                    else:
-                        price = offers.get("price")
+                    if isinstance(offers, list): price = offers[0].get("price")
+                    else: price = offers.get("price")
                         
                     if price:
-                        print(f"   Found SEO Price: {price}")
                         return float(price)
             except:
                 continue
                 
-        # 3. Fallback: Try the "Raw Meta Data" if SEO fails
-        meta_price = soup.find("meta", property="product:price:amount")
-        if meta_price:
-             return float(meta_price["content"])
-
-        print("❌ Zara SEO data missing. They might be blocking cloud IPs.")
+        print("❌ Zara SEO data missing. (Bot detection might be high today)", flush=True)
         return None
-
     except Exception as e:
-        print(f"❌ Zara Error: {e}")
+        print(f"❌ Zara Error: {e}", flush=True)
         return None
 
-# --- 2. AMAZON (Clean URL Strategy) ---
+# --- 2. AMAZON (The Clean URL Strategy) ---
 def fetch_amazon(url):
-    # CLEAN THE URL: Strip all the tracking junk
-    # Converts: https://amazon.ca/dp/B016XTADG2/?stuff... -> https://amazon.ca/dp/B016XTADG2
     clean_url = url.split("?")[0]
-    print(f"📦 Amazon Detected: {clean_url}")
-    
+    print(f"📦 Amazon Detected: {clean_url}", flush=True)
     try:
         response = requests.get(clean_url, impersonate="chrome110", timeout=30)
         
-        # Check for the "Dog Page" (CAPTCHA)
+        # Check for CAPTCHA
         if "api-services-support@amazon.com" in response.text or "Enter the characters" in response.text:
-            print("🛑 AMAZON BLOCKED YOU (CAPTCHA Page).")
-            print("   (This is normal for GitHub IPs. You need a Proxy to fix this reliably.)")
+            print("🛑 AMAZON BLOCKED YOU (CAPTCHA Page).", flush=True)
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Try finding the price
+        # Try all price selectors
         selectors = [".a-price .a-offscreen", "#priceblock_ourprice", ".a-price-whole"]
         for sel in selectors:
             element = soup.select_one(sel)
             if element:
-                # Clean "$24.99" -> 24.99
-                clean = element.text.strip().replace("$", "").replace(",", "").replace(".", "")
-                
-                # Regex to find the first real number (e.g. "24.99")
-                match = re.search(r"(\d+\.\d+)", element.text.replace("$", "").replace(",", ""))
+                clean = element.text.strip().replace("$", "").replace(",", "")
+                # Find the first valid number
+                match = re.search(r"(\d+\.\d+)", clean)
                 if match:
                     return float(match.group(1))
                     
-        print("❌ Page loaded, but price not found (Layout mismatch)")
+        print("❌ Amazon page loaded, but price not found (Layout mismatch)", flush=True)
         return None
-
     except Exception as e:
-        print(f"❌ Amazon Error: {e}")
+        print(f"❌ Amazon Error: {e}", flush=True)
         return None
 
-# --- 3. EBAY (Keep this, it works) ---
+# --- 3. EBAY (The Proven Method) ---
 def fetch_ebay(url):
-    # ... (Paste your working eBay function here) ...
-    # (I'm skipping pasting it to save space, but DO NOT DELETE IT from your file!)
-    print(f"🕵️  eBay Detected: {url}")
-    # ... use the exact code you had before ...
-    # Quick fix for now:
+    clean_url = url.split("?")[0]
+    print(f"🕵️  eBay Detected: {clean_url}", flush=True)
     try:
-        clean_url = url.split("?")[0]
         response = requests.get(clean_url, impersonate="chrome110", timeout=30)
         soup = BeautifulSoup(response.text, "html.parser")
+        
         price_element = soup.find('div', class_='x-price-primary')
         if not price_element: price_element = soup.find('span', id='prcIsum')
+        if not price_element: price_element = soup.find('div', class_='main-price-with-shipping')
+
         if price_element:
             text = price_element.text.strip().replace("C", "").replace("US", "").replace("$", "").replace(",", "")
             if "Approx" in text: text = text.split("Approx")[1]
             return float(text.strip())
-    except:
+        
+        print("❌ eBay price not found", flush=True)
         return None
-    return None
+    except Exception as e:
+        print(f"❌ eBay Error: {e}", flush=True)
+        return None
 
 # --- ROUTER ---
 def get_price(url):
@@ -124,4 +101,30 @@ def get_price(url):
     elif "ebay" in url: return fetch_ebay(url)
     else: return None
 
-# ... (Rest of main loop logic)
+# --- MAIN LOOP ---
+def check_prices():
+    print("--- STARTING PRICE CHECK ---", flush=True)
+    
+    # HARDCODED LIST for immediate testing
+    items_to_track = [
+        {"url": "https://www.ebay.ca/itm/376654197486", "note": "eBay Test"},
+        {"url": "https://www.amazon.ca/Bluetooth-Anker-SoundCore-Dual-Driver-Distortion/dp/B016XTADG2", "note": "Amazon Test"},
+        {"url": "https://www.zara.com/ca/en/textured-pocket-cardigan-p09598402.html", "note": "Zara Test"}
+    ]
+
+    for item in items_to_track:
+        url = item["url"]
+        note = item["note"]
+        
+        print(f"\n🔎 Checking {note}...", flush=True)
+        price = get_price(url)
+        
+        if price:
+            print(f"   ✅ SUCCESS: {price}", flush=True)
+        else:
+            print(f"   ❌ FAILED: Could not retrieve price.", flush=True)
+
+    print("\n--- CHECK COMPLETE ---", flush=True)
+
+if __name__ == "__main__":
+    check_prices()
