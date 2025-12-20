@@ -33,69 +33,40 @@ def fetch_ebay(url):
         return None
     
 def fetch_aritzia(url):
-    print(f"👗 Aritzia Detected: Checking SEO data for {url}", flush=True)
+    print(f"👗 Aritzia Detected: {url}", flush=True)
     try:
-        # Aritzia requires a clean URL (no extra tracking garbage)
         clean_url = url.split("?")[0]
-        
-        # 1. Fetch with Chrome Impersonation
         response = requests.get(clean_url, impersonate="chrome110", timeout=30)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # 2. Strategy A: The SEO Data (Golden Ticket)
-        # Aritzia puts product data in a script tag for Google Shopping
-        schema_tags = soup.find_all("script", type="application/ld+json")
+        # STRATEGY 1: The "Test ID" (From your screenshot)
+        # We look for any tag that has this specific data-testid attribute
+        price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
         
-        for tag in schema_tags:
-            try:
-                data = json.loads(tag.string)
+        # Backup: Sometimes it's called 'product-price-text' (the parent container)
+        if not price_tag:
+            price_tag = soup.find(attrs={"data-testid": "product-price-text"})
+
+        if price_tag:
+            raw_text = price_tag.text.strip()
+            print(f"   Found Raw Price: {raw_text}", flush=True)
+            
+            # Clean it: "$425" -> 425.0
+            # Remove symbols, CAD, and whitespace
+            clean_text = raw_text.replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
+            
+            # Handle ranges (e.g. "100 - 150") by taking the first number
+            if "-" in clean_text:
+                clean_text = clean_text.split("-")[0].strip()
                 
-                # Check 1: Is it a direct Product?
-                if data.get("@type") == "Product":
-                    offers = data.get("offers", {})
-                    if isinstance(offers, list): 
-                        price = offers[0].get("price")
-                    else:
-                        price = offers.get("price")
-                    
-                    if price:
-                        return float(price)
+            return float(clean_text)
 
-                # Check 2: Sometimes Aritzia wraps it in a "Graph"
-                if "@graph" in data:
-                    for item in data["@graph"]:
-                        if item.get("@type") == "Product":
-                            offers = item.get("offers", {})
-                            if isinstance(offers, list): 
-                                price = offers[0].get("price")
-                            else:
-                                price = offers.get("price")
-                            if price: return float(price)
-            except:
-                continue
-
-        # 3. Strategy B: Visual Selector (Fallback)
-        # If SEO fails, look for the visual price tag
-        # Aritzia often uses these classes:
-        selectors = [
-            ".price-default", 
-            ".js-product-price", 
-            ".product-price__amount"
-        ]
-        
-        for sel in selectors:
-            element = soup.select_one(sel)
-            if element:
-                clean = element.text.strip().replace("C$", "").replace("$", "").replace("CAD", "")
-                return float(clean)
-
-        print("❌ Aritzia data missing. (Might need cookies/proxies)", flush=True)
+        print("❌ Aritzia price tag not found. (Page might be loading via JavaScript)", flush=True)
         return None
 
     except Exception as e:
         print(f"❌ Aritzia Error: {e}", flush=True)
         return None
-    
 def fetch_toscrape(url):
     # Sandbox parser for testing
     try:
