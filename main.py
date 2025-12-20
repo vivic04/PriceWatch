@@ -11,23 +11,32 @@ DB_FILE = "price_history.json"
 TRACKING_FILE = "tracking_list.json"
 
 # --- 1. THE BROWSER ENGINE (For Aritzia / Difficult Sites) ---
+import random # Add this at the top if missing
+
 def fetch_with_browser(url):
     print(f"🎭 Playwright Browser: Launching for {url}", flush=True)
     
     try:
         with sync_playwright() as p:
+            # LAUNCH: We use a larger window and extra args to look like a real PC
             browser = p.chromium.launch(
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+                args=[
+                    "--disable-blink-features=AutomationControlled", 
+                    "--no-sandbox", 
+                    "--start-maximized"
+                ]
             )
             
-            # 1. CREATE CONTEXT WITH CANADIAN COOKIES
+            # CONTEXT: Force Canada + Real User Agent
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080}
+                viewport={"width": 1920, "height": 1080},
+                locale="en-CA",
+                timezone_id="America/Toronto"
             )
             
-            # Force Aritzia to show the Canadian site (CAD prices)
+            # Inject Cookies to force CAD currency
             context.add_cookies([
                 {"name": "countryCode", "value": "CA", "domain": ".aritzia.com", "path": "/"},
                 {"name": "currencyCode", "value": "CAD", "domain": ".aritzia.com", "path": "/"}
@@ -35,60 +44,55 @@ def fetch_with_browser(url):
             
             page = context.new_page()
             
-            print("   -> Loading Page (Forcing Canada Region)...", flush=True)
+            # --- 1. THE HUMAN LOADER ---
+            print("   -> Loading Page...", flush=True)
             page.goto(url, timeout=90000)
             
-            # 2. WAIT FOR NETWORK IDLE (Let the data load)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except: pass
+            # CHECK TITLE: Are we blocked?
+            page_title = page.title()
+            print(f"   🔎 PAGE TITLE: {page_title}", flush=True)
+            if "Attention Required" in page_title or "Just a moment" in page_title:
+                print("   🛑 CLOUDFLARE BLOCK DETECTED.", flush=True)
+                return None
 
-            # 3. GOD MODE: STEAL THE INTERNAL DATA (Bypasses Visual HTML)
-            # We execute JavaScript to read the 'utag_data' (Tealium Analytics) 
-            # or 'digitalData' which stores the clean product info.
-            print("   -> Extracting internal data layer...", flush=True)
-            
-            product_data = page.evaluate("() => { \
-                try { \
-                    return window.utag_data || window.digitalData.product[0].productInfo || {}; \
-                } catch(e) { return {}; } \
-            }")
-            
-            # Check if we found the price in the analytics data
-            # utag_data usually has 'product_price': ['425.00']
-            if product_data:
-                # print(f"   🔎 DEBUG DATA: {str(product_data)[:200]}...", flush=True) # Uncomment to see raw data
-                
-                # Check for 'product_price' (List or String)
-                price_list = product_data.get("product_price", [])
-                if isinstance(price_list, list) and len(price_list) > 0:
-                    raw_price = price_list[0]
-                    print(f"   ✅ Found Price in Data Layer: {raw_price}", flush=True)
-                    return float(raw_price)
-                
-                # Check for 'basePrice' or 'price'
-                if "price" in product_data:
-                    return float(product_data["price"])
+            # --- 2. THE MOUSE WIGGLE ---
+            # Bots don't move mice. Humans do. We simulate random movement.
+            print("   -> Simulating human mouse movement...", flush=True)
+            for i in range(5):
+                x = random.randint(100, 800)
+                y = random.randint(100, 800)
+                page.mouse.move(x, y, steps=10) # 'steps' makes it smooth, not instant
+                page.wait_for_timeout(random.randint(200, 500))
 
-            # 4. FALLBACK: VISUAL SCAN (With Canada Cookie now active)
-            print("   -> Data layer empty, scanning text...", flush=True)
-            content = page.content()
-            browser.close()
-            
-            soup = BeautifulSoup(content, "html.parser")
-            price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
-            
-            if price_tag:
-                clean = price_tag.text.strip().replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
-                return float(clean)
-            
-            # Last ditch: Find any "$425" pattern
+            # --- 3. SCROLL DOWN SLOWLY ---
+            page.mouse.wheel(0, 600)
+            page.wait_for_timeout(2000)
+
+            # --- 4. EXTRACT PRICE (Regex Scan) ---
+            # We scan the raw text for ANY dollar amount now that we've "woken up" the page
             import re
-            match = re.search(r'(?:CAD|\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', soup.get_text())
-            if match:
-                return float(match.group(1).replace(",", ""))
+            body_text = page.inner_text("body")
+            
+            # Look for "$ 425", "$425", "425 CAD"
+            matches = re.findall(r'(?:CAD|\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', body_text)
+            
+            browser.close()
 
-            print("❌ Price not found (Even with Canada Cookies).", flush=True)
+            if matches:
+                # Filter out small numbers (likely shipping/promos)
+                prices = []
+                for m in matches:
+                    try:
+                        val = float(m.replace(",", ""))
+                        if val > 20: prices.append(val) # Filter out junk like "$5 shipping"
+                    except: continue
+                
+                if prices:
+                    final_price = max(prices)
+                    print(f"   ✅ Found Price via Human Scan: {final_price}", flush=True)
+                    return final_price
+
+            print("❌ No price found. (We might be fully IP blocked)", flush=True)
             return None
 
     except Exception as e:
