@@ -94,8 +94,8 @@ def get_price(url):
 # --- MAIN LOGIC ---
 my_items = [
     "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
-    # I kept your original link but it will be cleaned automatically by the script
-    "https://www.ebay.ca/itm/376654197486" 
+    "https://www.ebay.ca/itm/376654197486",
+    "https://www.ebay.ca/itm/177323518317"
 ]
 
 def check_prices():
