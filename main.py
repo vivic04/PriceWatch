@@ -20,65 +20,75 @@ def fetch_with_browser(url):
                 headless=True,
                 args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
             )
-            # Create a 1080p window so the layout matches your screenshot
+            
+            # 1. CREATE CONTEXT WITH CANADIAN COOKIES
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 viewport={"width": 1920, "height": 1080}
             )
+            
+            # Force Aritzia to show the Canadian site (CAD prices)
+            context.add_cookies([
+                {"name": "countryCode", "value": "CA", "domain": ".aritzia.com", "path": "/"},
+                {"name": "currencyCode", "value": "CAD", "domain": ".aritzia.com", "path": "/"}
+            ])
+            
             page = context.new_page()
             
-            print("   -> Loading Page...", flush=True)
+            print("   -> Loading Page (Forcing Canada Region)...", flush=True)
             page.goto(url, timeout=90000)
-
-            # --- INTERACTION STEP ---
-            # Click "Select a Size" to force the price to load
+            
+            # 2. WAIT FOR NETWORK IDLE (Let the data load)
             try:
-                print("   -> Clicking 'Select a Size'...", flush=True)
-                # We target the specific text from your screenshot
-                page.click("text=Select a Size", timeout=5000)
-                page.wait_for_timeout(1000)
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except: pass
+
+            # 3. GOD MODE: STEAL THE INTERNAL DATA (Bypasses Visual HTML)
+            # We execute JavaScript to read the 'utag_data' (Tealium Analytics) 
+            # or 'digitalData' which stores the clean product info.
+            print("   -> Extracting internal data layer...", flush=True)
+            
+            product_data = page.evaluate("() => { \
+                try { \
+                    return window.utag_data || window.digitalData.product[0].productInfo || {}; \
+                } catch(e) { return {}; } \
+            }")
+            
+            # Check if we found the price in the analytics data
+            # utag_data usually has 'product_price': ['425.00']
+            if product_data:
+                # print(f"   🔎 DEBUG DATA: {str(product_data)[:200]}...", flush=True) # Uncomment to see raw data
                 
-                # Click the first available size in the dropdown
-                # This usually triggers the "Price Update" event
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-                print("   -> Selected a size (S/M/L).", flush=True)
-                page.wait_for_timeout(3000) # Give it 3s to update the price
-            except:
-                print("   -> Could not select size (might be one-size or different layout).", flush=True)
+                # Check for 'product_price' (List or String)
+                price_list = product_data.get("product_price", [])
+                if isinstance(price_list, list) and len(price_list) > 0:
+                    raw_price = price_list[0]
+                    print(f"   ✅ Found Price in Data Layer: {raw_price}", flush=True)
+                    return float(raw_price)
+                
+                # Check for 'basePrice' or 'price'
+                if "price" in product_data:
+                    return float(product_data["price"])
 
-            # --- EVIDENCE ---
-            page.screenshot(path="aritzia_final.png")
-            print("   📸 Screenshot saved: aritzia_final.png", flush=True)
-
-            # --- FINAL PRICE EXTRACT ---
-            # Now we look for the ID from your OTHER screenshot (image_e0be46.png)
+            # 4. FALLBACK: VISUAL SCAN (With Canada Cookie now active)
+            print("   -> Data layer empty, scanning text...", flush=True)
             content = page.content()
             browser.close()
             
             soup = BeautifulSoup(content, "html.parser")
-            
-            # 1. The ID you found in the inspector
             price_tag = soup.find(attrs={"data-testid": "product-list-price-text"})
             
-            # 2. Fallback: Search for the text "$425" (or whatever number) visually
-            if not price_tag:
-                 # Look for any text that starts with $ and has digits
-                import re
-                body_text = soup.get_text()
-                # Find "$ 425" or "$425"
-                match = re.search(r'\$\s*(\d{2,5})', body_text)
-                if match:
-                    print(f"   ✅ Found Price in Text: {match.group(1)}", flush=True)
-                    return float(match.group(1))
-
             if price_tag:
-                raw_text = price_tag.text.strip()
-                print(f"   ✅ FOUND RAW TEXT: {raw_text}", flush=True)
-                clean = raw_text.replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
+                clean = price_tag.text.strip().replace("C", "").replace("$", "").replace("CAD", "").replace(",", "").strip()
                 return float(clean)
-                
-            print("❌ Price still hidden. (Check aritzia_final.png)", flush=True)
+            
+            # Last ditch: Find any "$425" pattern
+            import re
+            match = re.search(r'(?:CAD|\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)', soup.get_text())
+            if match:
+                return float(match.group(1).replace(",", ""))
+
+            print("❌ Price not found (Even with Canada Cookies).", flush=True)
             return None
 
     except Exception as e:
